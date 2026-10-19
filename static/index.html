@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grabarr</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#111418;color:#e8e8e8}
+header{display:flex;gap:8px;padding:16px;align-items:center}
+h1{font-size:20px;margin:0 16px 0 0}
+h2{font-size:16px;padding:24px 16px 8px;margin:0}
+#query{flex:1;padding:10px;border:none;border-radius:8px;font-size:15px}
+button{padding:10px 16px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;font-size:14px}
+button:disabled{background:#333;cursor:default}
+#results{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;padding:0 16px}
+.card{background:#1c2128;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.poster{width:100%;aspect-ratio:2/3;object-fit:cover;background:#2a2f37;display:block}
+.no-poster{width:100%;aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;background:#2a2f37;color:#777}
+.info{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1}
+.title{font-weight:600;font-size:14px}
+.meta{font-size:12px;color:#999}
+.badge{font-size:11px;padding:3px 8px;border-radius:99px;align-self:flex-start}
+.badge.downloading{background:#92400e;color:#fde68a}
+.badge.library{background:#166534;color:#bbf7d0}
+select{padding:6px;border-radius:6px;border:none;background:#2a2f37;color:#e8e8e8}
+.row{display:flex;gap:6px}
+.row select{flex:1}
+table{width:calc(100% - 32px);margin:0 16px;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #222}
+th{color:#999;font-weight:500}
+.status{padding:2px 8px;border-radius:99px;font-size:11px}
+.status.done{background:#166534;color:#bbf7d0}
+.status.error{background:#7f1d1d;color:#fecaca}
+.status.active{background:#92400e;color:#fde68a}
+#msg{padding:8px 16px;color:#f87171;font-size:13px;min-height:20px}
+</style>
+</head>
+<body>
+<header>
+<h1>Grabarr</h1>
+<input id="query" type="text" placeholder="Tytuł..." autofocus>
+<button onclick="search()">Szukaj</button>
+</header>
+<div id="msg"></div>
+<div id="results"></div>
+<h2>Requesty</h2>
+<table>
+<thead><tr><th>Tytuł</th><th>Sezon</th><th>Język</th><th>Status</th><th>Kto</th><th>Kiedy</th><th></th></tr></thead>
+<tbody id="requests"></tbody>
+</table>
+<script>
+const STATUS = {
+  sent: ['Wysłane', 'active'], downloading: ['Pobieranie', 'active'], copying: ['Kopiowanie', 'active'],
+  done: ['Gotowe', 'done'], no_match_pl: ['Brak PL', 'error'], no_release: ["Brak release'u", 'error'],
+  file_not_found: ['Nie znaleziono pliku', 'error'],
+};
+const $ = id => document.getElementById(id);
+const msg = t => $('msg').textContent = t || '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+
+async function search() {
+  const query = $('query').value.trim();
+  if (!query) return;
+  msg('');
+  try { renderResults(await api('/api/search?query=' + encodeURIComponent(query))); }
+  catch (e) { msg(e.message); }
+}
+
+function renderResults(items) {
+  $('results').innerHTML = items.map(it => {
+    const poster = it.poster
+      ? `<img class="poster" src="${esc(it.poster)}" loading="lazy">`
+      : `<div class="no-poster">brak plakatu</div>`;
+    const badge = it.badge === 'downloading' ? '<span class="badge downloading">Pobieranie</span>'
+      : it.badge === 'library' ? '<span class="badge library">W bibliotece</span>' : '';
+    const season = it.media_type === 'tv'
+      ? `<select data-season>${seasonOptions(it.number_of_seasons)}</select>` : '';
+    const controls = it.badge ? '' : `
+      <div class="row">${season}<select data-lang>
+        <option value="">Auto</option><option value="pl">PL</option><option value="en">EN</option>
+      </select></div>
+      <button onclick="requestItem(this, ${it.tmdb_id}, '${it.media_type}')">Pobierz</button>`;
+    return `<div class="card">${poster}<div class="info">
+      <div class="title">${esc(it.title)}</div>
+      <div class="meta">${it.media_type === 'tv' ? 'Serial' : 'Film'}${it.year ? ' · ' + esc(it.year) : ''}</div>
+      ${badge}${controls}</div></div>`;
+  }).join('');
+}
+
+function seasonOptions(n) {
+  let html = '<option value="">Cały serial</option>';
+  for (let s = 1; s <= n; s++) html += `<option value="${s}">S${String(s).padStart(2, '0')}</option>`;
+  return html;
+}
+
+async function requestItem(btn, tmdbId, mediaType) {
+  const card = btn.closest('.card');
+  const seasonSel = card.querySelector('[data-season]');
+  const langSel = card.querySelector('[data-lang]');
+  const body = {
+    tmdb_id: tmdbId, media_type: mediaType,
+    season: seasonSel && seasonSel.value ? parseInt(seasonSel.value) : null,
+    language: langSel && langSel.value ? langSel.value : null,
+  };
+  btn.disabled = true;
+  try {
+    await api('/api/request', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    msg('');
+    await Promise.all([search(), loadRequests()]);
+  } catch (e) { msg(e.message); btn.disabled = false; }
+}
+
+async function loadRequests() {
+  try { renderRequests(await api('/api/requests')); } catch (e) { msg(e.message); }
+}
+
+function renderRequests(rows) {
+  $('requests').innerHTML = rows.map(r => {
+    const [label, cls] = STATUS[r.status] || [r.status, ''];
+    const fallback = r.status === 'no_match_pl'
+      ? `<button onclick="fallbackEn(${r.id}, this)">Pobierz EN</button>` : '';
+    return `<tr>
+      <td>${esc(r.title)}</td>
+      <td>${r.media_type === 'tv' ? (r.season ? 'S' + String(r.season).padStart(2, '0') : 'Cały serial') : '—'}</td>
+      <td>${esc((r.language_target || '').toUpperCase())}</td>
+      <td><span class="status ${cls}">${label}</span></td>
+      <td>${esc(r.requested_by)}</td>
+      <td>${esc(r.requested_at)}</td>
+      <td>${fallback}</td></tr>`;
+  }).join('');
+}
+
+async function fallbackEn(id, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/requests/${id}/fallback-en`, {method: 'POST'});
+    await loadRequests();
+  } catch (e) { msg(e.message); btn.disabled = false; }
+}
+
+$('query').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+loadRequests();
+setInterval(loadRequests, 15000);
+</script>
+</body>
+</html>

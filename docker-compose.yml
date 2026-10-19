@@ -1,0 +1,58 @@
+services:
+  grabarr:
+    image: grabarr:latest
+    restart: unless-stopped
+    environment:
+      - PROWLARR_URL=${PROWLARR_URL:-http://prowlarr:9696}
+      - PROWLARR_API_KEY=${PROWLARR_API_KEY}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - PLEX_URL=${PLEX_URL:-http://plex:32400}
+      - PLEX_TOKEN=${PLEX_TOKEN}
+      - PLEX_LIBRARY_MOVIES=${PLEX_LIBRARY_MOVIES:-Filmy}
+      - PLEX_LIBRARY_SERIES=${PLEX_LIBRARY_SERIES:-Seriale}
+      - DELUGE_URL=${DELUGE_URL:-http://deluge:8112}
+      - DELUGE_PASSWORD=${DELUGE_PASSWORD}
+      - MOVIES_DIR=/plex/movies
+      - SERIES_DIR=/plex/series
+      - DB_PATH=/data/grabarr.db
+      - REMOTE_USER_HEADER=X-Authentik-Username
+      - POLL_SECONDS=60
+    volumes:
+      - grabarr-data:/data
+      - ./config.yaml:/app/config.yaml:ro
+      # Save_path reported by Deluge must be valid inside this container:
+      # mount the same download volume Deluge writes to, at the same path.
+      - downloads:/downloads:ro
+      # Destination = Plex libraries; mount the same volumes Plex uses.
+      - plex-movies:/plex/movies
+      - plex-series:/plex/series
+    networks: [stack]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [stack]
+
+volumes:
+  grabarr-data:
+  caddy-data:
+  caddy-config:
+  downloads:
+    external: true
+  plex-movies:
+    external: true
+  plex-series:
+    external: true
+
+networks:
+  stack:
+    external: true

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+grabarr.db
+.venv/
+.pytest_cache/
+.env

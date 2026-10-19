@@ -1,0 +1,9 @@
+grabarr.{$DOMAIN} {
+
+    forward_auth authentik.{$DOMAIN} {
+        uri /outpost.goauthentik.io/auth/caddy
+        copy_headers X-Authentik-Username X-Authentik-Email
+    }
+
+    reverse_proxy grabarr:8000
+}

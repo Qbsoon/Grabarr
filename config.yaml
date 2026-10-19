@@ -1,0 +1,21 @@
+lang_tokens:
+  pl_audio:
+    - pl
+    - lektor
+    - lektorpl
+    - dubpl
+    - pldub
+    - dubbing
+    - dubbingpl
+    - polski
+    - pol
+  subs_only:
+    - napisy
+    - napisypl
+    - plsubbed
+    - subpl
+  multi:
+    - multi
+  en:
+    - eng
+    - english

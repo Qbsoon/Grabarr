@@ -1,0 +1,5 @@
+quart~=0.20
+hypercorn~=0.17
+httpx~=0.28
+aiosqlite~=0.21
+pyyaml~=6.0
