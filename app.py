@@ -52,13 +52,38 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG = "https://image.tmdb.org/t/p/w342"
 ACTIVE_STATUSES = ("sent", "downloading", "copying")
 
+DEFAULT_CONFIG_YAML = """lang_tokens:
+  pl_audio:
+    - pl
+    - lektor
+    - lektorpl
+    - dubpl
+    - pldub
+    - dubbing
+    - dubbingpl
+    - polski
+    - pol
+  subs_only:
+    - napisy
+    - napisypl
+    - plsubbed
+    - subpl
+  multi:
+    - multi
+  en:
+    - eng
+    - english
+"""
+
 
 def load_lang_tokens():
     path = os.path.join(BASE_DIR, "data", "config.yaml")
-    if os.path.exists(path):
-        with open(path) as f:
-            return yaml.safe_load(f)["lang_tokens"]
-    raise RuntimeError("config.yaml not found")
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(DEFAULT_CONFIG_YAML)
+    with open(path) as f:
+        return yaml.safe_load(f)["lang_tokens"]
 
 
 LANG_TOKENS = load_lang_tokens()

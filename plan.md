@@ -60,7 +60,7 @@ Jedna aplikacja webowa. Użytkownik wpisuje tytuł. Klika "Pobierz". System wybi
 - Brak dopasowania po 24 h: status `file_not_found`.
 
 ## 7. Matcher języka
-Tabela w `config.yaml` w katalogu `data/` przy katalogu aplikacji. W kontenerze jeden mount `./data:/app/data`; DB i config w tym samym katalogu. Nie w kodzie. Tokenizacja tytułu po znakach niealfanumerycznych. Case-insensitive.
+Tabela w `config.yaml` w katalogu `data/` przy katalogu aplikacji. W kontenerze jeden mount `./data:/app/data`; DB i config w tym samym katalogu. Przy braku pliku aplikacja sama generuje default przy starcie (default zaszyty w kodzie). Tokenizacja tytułu po znakach niealfanumerycznych. Case-insensitive.
 - `pl_audio`: pl, lektor, lektorpl, dubpl, pldub, dubbing, dubbingpl, polski, pol
 - `subs_only`: napisy, napisypl, plsubbed, subpl
 - `multi`: multi — kandydat PL tylko gdy towarzyszy mu token z pl_audio
