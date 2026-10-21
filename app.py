@@ -19,7 +19,9 @@ log = logging.getLogger("grabarr")
 
 app = Quart(__name__)
 
-DB_PATH = os.environ.get("DB_PATH", "grabarr.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DB_PATH = os.path.join(BASE_DIR, "data", "grabarr.db")
 
 CONFIG = {k: os.environ.get(k, d) for k, d in {
     "PROWLARR_URL": "",
@@ -52,10 +54,10 @@ ACTIVE_STATUSES = ("sent", "downloading", "copying")
 
 
 def load_lang_tokens():
-    for path in ("/app/config.yaml", os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")):
-        if os.path.exists(path):
-            with open(path) as f:
-                return yaml.safe_load(f)["lang_tokens"]
+    path = os.path.join(BASE_DIR, "data", "config.yaml")
+    if os.path.exists(path):
+        with open(path) as f:
+            return yaml.safe_load(f)["lang_tokens"]
     raise RuntimeError("config.yaml not found")
 
 

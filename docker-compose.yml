@@ -14,12 +14,10 @@ services:
       - DELUGE_PASSWORD=
       - MOVIES_DIR=/plex/movies
       - SERIES_DIR=/plex/series
-      - DB_PATH=/data/grabarr.db
       - REMOTE_USER_HEADER=X-Authentik-Username
       - POLL_SECONDS=60
     volumes:
-      - ./data:/data
-      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
       - ./downloads:/downloads:ro
       - ./plex/movies:/plex/movies
       - ./plex/series:/plex/series

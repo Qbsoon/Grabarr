@@ -5,16 +5,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py config.yaml ./
+COPY app.py ./
 COPY static ./static
 
 RUN useradd -r -s /usr/sbin/nologin grabarr \
-    && mkdir -p /data /plex/movies /plex/series \
-    && chown -R grabarr /data /plex
+    && mkdir -p /app/data /plex/movies /plex/series \
+    && chown grabarr /app/data
 
 USER grabarr
-
-ENV DB_PATH=/data/grabarr.db
 
 EXPOSE 8000
 
