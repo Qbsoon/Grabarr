@@ -8,9 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./
 COPY static ./static
 
-RUN useradd -r -s /usr/sbin/nologin grabarr \
+RUN groupadd -g 568 grabarr \
+    && useradd -r -u 568 -g grabarr -s /usr/sbin/nologin grabarr \
     && mkdir -p /app/data /plex/movies /plex/series \
-    && chown grabarr /app/data
+    && chown grabarr:grabarr /app/data
 
 USER grabarr
 
