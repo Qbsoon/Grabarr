@@ -3,4 +3,3 @@ __pycache__/
 grabarr.db
 .venv/
 .pytest_cache/
-.env

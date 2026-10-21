@@ -4,7 +4,7 @@
 Jedna aplikacja webowa. Użytkownik wpisuje tytuł. Klika "Pobierz". System wybiera release, pobiera przez Prowlarr do Deluge i kopiuje do bibliotek Plex. Bez Radarr. Bez Sonarr. Bez kont. Bez monitorowania.
 
 ## 2. Wymagania twarde
-- Auth wyłącznie przez Caddy forward_auth (Authentik). Aplikacja czyta nagłówek użytkownika. Zero własnych kont, haseł, rejestracji.
+- Auth wyłącznie przez forward_auth (Authentik) w **istniejącym, zewnętrznym Caddy** użytkownika — aplikacja NIE bundle'uje własnego reverse proxy ani wspólnej sieci Docker; wystawia port na hoście. Aplikacja czyta nagłówek użytkownika. Zero własnych kont, haseł, rejestracji.
 - Filtry release: rozdzielczość >= 1080p, rozmiar <= 30 GB na sezon (twardy limit; release pokrywający K sezonów: limit 30*K GB). Preferencja 2160p gdy dostępna; w obrębie tej samej rozdzielczości sort po seeders malejąco.
 - Brak monitorowania, upgrade'ów, RSS. Request = jednorazowa akcja.
 - Kopiowanie po ukończeniu. Nie move. Nie hardlink. Oryginał zostaje w katalogu Deluge do seedowania.
@@ -88,13 +88,15 @@ Statusy: `sent, downloading, copying, done, no_match_pl, no_release, file_not_fo
 
 ## 11. Konfiguracja
 
-PROWLARR_URL=
+Wszystkie wartości plain text w `docker-compose.yml`. Bez interpolacji `${}`, bez `.env`, bez `env_file`.
+
+PROWLARR_URL=http://prowlarr:9696
 
 PROWLARR_API_KEY=
 
 TMDB_API_KEY=
 
-PLEX_URL=
+PLEX_URL=http://plex:32400
 
 PLEX_TOKEN=
 
@@ -102,23 +104,17 @@ PLEX_LIBRARY_MOVIES=Filmy
 
 PLEX_LIBRARY_SERIES=Seriale
 
-PLEX_CACHE_HOURS=6
-
-DELUGE_URL=
+DELUGE_URL=http://deluge:8112
 
 DELUGE_PASSWORD=
 
-MOVIES_DIR=
+MOVIES_DIR=/plex/movies
 
-SERIES_DIR=
+SERIES_DIR=/plex/series
 
-MAX_SIZE_GB=30
-
-MIN_RESOLUTION=1080
+DB_PATH=/data/grabarr.db
 
 REMOTE_USER_HEADER=X-Authentik-Username
-
-AUTH_DISABLED=false
 
 POLL_SECONDS=60
 
@@ -128,7 +124,7 @@ POLL_SECONDS=60
 - [x] M3: Prowlarr search + matcher języka + parser sezonów + filtry + grab.
 - [x] M4: Plex cache + badge "W bibliotece" + blokada duplikatów.
 - [x] M5: poller Deluge API (infoHash match) + kopiowanie.
-- [x] M6: Dockerfile + snippet Caddy + testy E2E.
+- [x] M6: Dockerfile + testy E2E.
 
 ## 13. Kryteria akceptacji
 - Search "Godzilla": lista TMDB z plakatami. Pozycja z biblioteki ma badge, bez przycisku pobierania.
@@ -152,23 +148,7 @@ POLL_SECONDS=60
 - Race dwóch równoczesnych requestów na tę samą pozycję: blokada na poziomie backendu (409), nie tylko UI.
 - Seriale wydawnictw bez packów sezonowych (tylko pojedyncze odcinki) → `no_release`. Brak pobierania per-odcinek w MVP.
 
-## 15. Snippet Caddy (referencja)
-
-grabarr.{$DOMAIN} {
-
-forward_auth authentik.{$DOMAIN} {
-
-uri /outpost.goauthentik.io/auth/caddy
-
-copy_headers X-Authentik-Username X-Authentik-Email
-
-}
-
-reverse_proxy grabarr:8000
-
-}
-
-## 16. Zasady dla agenta realizującego
+## 15. Zasady dla agenta realizującego
 - Kod zwięzły, bez zbędnych komentarzy, bez nadmiarowej abstrakcji.
 - Zero funkcji poza niniejszą specyfikacją.
 - Zero pomysłów "warto dodać".
