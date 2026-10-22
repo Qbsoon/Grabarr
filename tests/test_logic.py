@@ -12,6 +12,7 @@ from app import (  # noqa: E402
     hash_hex,
     parse_resolution,
     parse_seasons,
+    plex_items,
     safe_name,
     season_coverage,
 )
@@ -141,6 +142,19 @@ def test_extract_tmdb_ids():
 </MediaContainer>"""
     root = ET.fromstring(xml)
     ids = {i for m in root.iter("Metadata") for i in extract_tmdb_ids(m)}
+    assert ids == {550, 42}
+
+
+def test_plex_items_xml():
+    # Plex XML: itemy biblioteki to Video/Directory, nie Metadata (klucz z JSON)
+    xml = (
+        "<MediaContainer>"
+        '<Video guid="plex://movie/a"><Guid id="tmdb://550"/></Video>'
+        '<Directory guid="plex://show/b"><Guid id="tmdb://42"/></Directory>'
+        "</MediaContainer>"
+    )
+    root = ET.fromstring(xml)
+    ids = {i for m in plex_items(root) for i in extract_tmdb_ids(m)}
     assert ids == {550, 42}
     assert safe_name("/absolute/path") == "absolute/path"
     assert safe_name("a\\..\\b") == "a/b"

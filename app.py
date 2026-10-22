@@ -103,6 +103,10 @@ def extract_tmdb_ids(m):
     return out
 
 
+def plex_items(root):
+    return [m for m in root.iter() if m.get("guid")]
+
+
 async def refresh_plex_cache():
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.get(
@@ -125,7 +129,7 @@ async def refresh_plex_cache():
                 params={"X-Plex-Token": CONFIG["PLEX_TOKEN"]},
             )
             r.raise_for_status()
-            items = list(ET.fromstring(r.content).iter("Metadata"))
+            items = plex_items(ET.fromstring(r.content))
             ids[media_type] = {i for m in items for i in extract_tmdb_ids(m)}
             log.info(
                 "plex: section %r (%s): %d items, %d tmdb ids",
