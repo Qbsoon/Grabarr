@@ -1,11 +1,13 @@
 import base64
 import sys
 import os
+import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import (  # noqa: E402
     classify_language,
+    extract_tmdb_ids,
     filter_releases,
     hash_hex,
     parse_resolution,
@@ -118,6 +120,28 @@ def test_hash_hex_base32():
 
 def test_safe_name():
     assert safe_name("../../etc/passwd") == "etc/passwd"
+
+
+def test_filter_stats():
+    rel = [
+        mk("Movie.2023.PL.LEKTOR.1080p", 10 * 1024**3, indexer=1, guid="s1"),
+        mk("Movie.2023.720p", 10 * 1024**3, indexer=1, guid="s2"),
+        mk("Movie.2023.1080p", 40 * 1024**3, indexer=1, guid="s3"),
+    ]
+    stats = {}
+    out = filter_releases(rel, "en", "movie", None, None, stats=stats)
+    assert out == []
+    assert stats == {"total": 3, "deduped": 3, "lang": 1, "resolution": 1, "seasons": 0, "size": 1}
+
+
+def test_extract_tmdb_ids():
+    xml = """<MediaContainer>
+<Metadata guid="plex://movie/5d776845d1916d001fa9e3f6"><Guid id="tmdb://550"/><Guid id="imdb://tt0137523"/></Metadata>
+<Metadata guid="tmdb://42"/>
+</MediaContainer>"""
+    root = ET.fromstring(xml)
+    ids = {i for m in root.iter("Metadata") for i in extract_tmdb_ids(m)}
+    assert ids == {550, 42}
     assert safe_name("/absolute/path") == "absolute/path"
     assert safe_name("a\\..\\b") == "a/b"
     assert safe_name("..") == ""

@@ -41,16 +41,17 @@ CONFIG = {k: os.environ.get(k, d) for k, d in {
     "REMOTE_USER_HEADER": "X-Authentik-Username",
     "AUTH_DISABLED": "false",
     "POLL_SECONDS": "60",
+    "PROWLARR_TIMEOUT": "300",
 }.items()}
 
-for key in ("PLEX_CACHE_HOURS", "MAX_SIZE_GB", "MIN_RESOLUTION", "POLL_SECONDS"):
+for key in ("PLEX_CACHE_HOURS", "MAX_SIZE_GB", "MIN_RESOLUTION", "POLL_SECONDS", "PROWLARR_TIMEOUT"):
     CONFIG[key] = int(CONFIG[key])
 for key in ("PROWLARR_URL", "PLEX_URL", "DELUGE_URL"):
     CONFIG[key] = CONFIG[key].rstrip("/")
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG = "https://image.tmdb.org/t/p/w342"
-ACTIVE_STATUSES = ("sent", "downloading", "copying")
+ACTIVE_STATUSES = ("searching", "sent", "downloading", "copying")
 
 DEFAULT_CONFIG_YAML = """lang_tokens:
   pl_audio:
@@ -90,6 +91,17 @@ LANG_TOKENS = load_lang_tokens()
 
 PLEX_CACHE = {"movies": set(), "series": set(), "ts": 0.0}
 
+TMDB_GUID = re.compile(r"tmdb://(\d+)")
+
+
+def extract_tmdb_ids(m):
+    out = []
+    for s in (m.get("guid") or "", *(g.get("id") or "" for g in m.iter("Guid"))):
+        match = TMDB_GUID.search(s)
+        if match:
+            out.append(int(match.group(1)))
+    return out
+
 
 async def refresh_plex_cache():
     async with httpx.AsyncClient(timeout=15) as client:
@@ -113,11 +125,17 @@ async def refresh_plex_cache():
                 params={"X-Plex-Token": CONFIG["PLEX_TOKEN"]},
             )
             r.raise_for_status()
-            ids[media_type] = {
-                int(m.get("guid").rsplit(":", 1)[-1])
-                for m in ET.fromstring(r.content).iter("Metadata")
-                if (m.get("guid") or "").startswith("tmdb://")
-            }
+            items = list(ET.fromstring(r.content).iter("Metadata"))
+            ids[media_type] = {i for m in items for i in extract_tmdb_ids(m)}
+            log.info(
+                "plex: section %r (%s): %d items, %d tmdb ids",
+                CONFIG[name], media_type, len(items), len(ids[media_type]),
+            )
+            if items and not ids[media_type]:
+                log.warning(
+                    "plex: section %r has %d items but no tmdb:// ids (legacy agent?)",
+                    CONFIG[name], len(items),
+                )
     for media_type, s in ids.items():
         PLEX_CACHE[media_type] = s
     PLEX_CACHE["ts"] = time.time()
@@ -153,6 +171,13 @@ async def db_execute(sql, params=()):
         cur = await db.execute(sql, params)
         await db.commit()
         return cur.lastrowid
+
+
+async def migrate_db(db):
+    cur = await db.execute("PRAGMA table_info(requests)")
+    cols = {r[1] for r in await cur.fetchall()}
+    if "error" not in cols:
+        await db.execute("ALTER TABLE requests ADD COLUMN error TEXT")
 
 
 def classify_language(title):
@@ -197,27 +222,37 @@ def season_coverage(covered, season_req, number_of_seasons):
     return total
 
 
-def filter_releases(releases, target, media_type, season_req, number_of_seasons):
+def filter_releases(releases, target, media_type, season_req, number_of_seasons, stats=None):
     best = {}
     for r in releases:
         key = ((r.get("title") or "").lower(), r.get("indexerId"))
         if key not in best or (r.get("seeders") or 0) > (best[key].get("seeders") or 0):
             best[key] = r
+    if stats is not None:
+        stats.update(total=len(releases), deduped=len(best), lang=0, resolution=0, seasons=0, size=0)
     out = []
     for r in best.values():
         title = r.get("title") or ""
         if not language_passes(classify_language(title), target):
+            if stats is not None:
+                stats["lang"] += 1
             continue
         res = parse_resolution(title)
         if res < CONFIG["MIN_RESOLUTION"]:
+            if stats is not None:
+                stats["resolution"] += 1
             continue
         if media_type == "tv":
             k = season_coverage(parse_seasons(title), season_req, number_of_seasons)
             if k is None:
+                if stats is not None:
+                    stats["seasons"] += 1
                 continue
         else:
             k = 1
         if (r.get("size") or 0) > CONFIG["MAX_SIZE_GB"] * k * 1024**3:
+            if stats is not None:
+                stats["size"] += 1
             continue
         out.append(r)
     out.sort(key=lambda r: (-parse_resolution(r["title"]), -(r.get("seeders") or 0)))
@@ -262,29 +297,98 @@ async def tmdb_detail(media_type, tmdb_id):
 
 async def find_and_grab(media_type, d, target, season_req):
     category = 2000 if media_type == "movie" else 5000
-    queries = [d["title_original"]]
+
+    def query(title):
+        return f"{title} {d['year']}" if media_type == "movie" and d["year"] else title
+
+    queries = [query(d["title_original"])]
     if target == "pl" and d["title_pl"] and d["title_pl"] != d["title_original"]:
-        queries.append(d["title_pl"])
-    async with httpx.AsyncClient(timeout=60) as client:
+        queries.append(query(d["title_pl"]))
+    async with httpx.AsyncClient(timeout=CONFIG["PROWLARR_TIMEOUT"]) as client:
         results = await asyncio.gather(
-            *[prowlarr_search(client, q, category) for q in queries],
-            return_exceptions=True,
+            *[prowlarr_search(client, q, category) for q in queries]
         )
-        releases = [r for res in results if not isinstance(res, BaseException) for r in res]
+        releases = [r for res in results for r in res]
+        log.info("prowlarr: %d raw results for %r target=%s", len(releases), queries, target)
+        stats = {}
         candidates = filter_releases(
             releases, target, media_type,
             season_req if media_type == "tv" else None,
             d["number_of_seasons"] if media_type == "tv" else None,
+            stats=stats,
         )
         if not candidates:
+            log.warning("prowlarr: no release for %r target=%s stats=%s", queries, target, stats)
             return None
         grab_release = candidates[0]
+        log.info(
+            "prowlarr: grabbing %r indexer=%s size=%s seeders=%s",
+            grab_release.get("title"), grab_release.get("indexerId"),
+            grab_release.get("size"), grab_release.get("seeders"),
+        )
         await prowlarr_grab(client, grab_release)
         return grab_release
 
 
+ACTIVE_RIDS = set()
+
+
+async def perform_request(rid):
+    if rid in ACTIVE_RIDS:
+        return
+    ACTIVE_RIDS.add(rid)
+    try:
+        row = (await db_fetchall("SELECT * FROM requests WHERE id = ?", (rid,)))[0]
+        if row["status"] != "searching":
+            return
+        d = await tmdb_detail(row["media_type"], row["tmdb_id"])
+        if row["language_target"]:
+            target = row["language_target"]
+        elif "PL" in d["origin_country"] or d["animation"]:
+            target = "pl"
+        else:
+            target = "en"
+        release = await find_and_grab(row["media_type"], d, target, row["season"])
+        status = "sent" if release else ("no_match_pl" if target == "pl" else "no_release")
+        await db_execute(
+            "UPDATE requests SET title = ?, year = ?, language_target = ?, release_name = ?,"
+            " indexer_id = ?, guid = ?, info_hash = ?, size = ?, seeders = ?, status = ? WHERE id = ?",
+            (
+                d["title_pl"] or d["title_original"],
+                int(d["year"]) if d["year"] else None,
+                target,
+                release and release.get("title"), release and release.get("indexerId"),
+                release and release.get("guid"), release and release.get("infoHash"),
+                release and release.get("size"), release and release.get("seeders"),
+                status, rid,
+            ),
+        )
+        if status == "sent":
+            spawn_background(first_check(rid))
+    except Exception as exc:
+        log.warning("search failed for request %s", rid, exc_info=True)
+        await db_execute(
+            "UPDATE requests SET status = 'search_failed', error = ? WHERE id = ?",
+            (str(exc) or type(exc).__name__, rid),
+        )
+    finally:
+        ACTIVE_RIDS.discard(rid)
+
+
+async def resume_searching():
+    rows = await db_fetchall("SELECT id FROM requests WHERE status = ?", ("searching",))
+    return [spawn_background(perform_request(r["id"])) for r in rows]
+
+
 POLL_LOCK = asyncio.Lock()
-BACKGROUND_TASKS = []
+BACKGROUND_TASKS = set()
+
+
+def spawn_background(coro):
+    task = asyncio.create_task(coro)
+    BACKGROUND_TASKS.add(task)
+    task.add_done_callback(BACKGROUND_TASKS.discard)
+    return task
 
 
 def hash_hex(info_hash):
@@ -483,11 +587,14 @@ async def init_db():
             requested_by TEXT NOT NULL,
             requested_at TEXT NOT NULL,
             status TEXT NOT NULL,
+            error TEXT,
             copied_at TEXT
         )""")
+        await migrate_db(db)
         await db.commit()
-    BACKGROUND_TASKS.append(asyncio.create_task(poll_loop()))
-    BACKGROUND_TASKS.append(asyncio.create_task(plex_refresh_loop()))
+    await resume_searching()
+    spawn_background(poll_loop())
+    spawn_background(plex_refresh_loop())
 
 
 @app.before_request
@@ -545,7 +652,7 @@ async def api_search():
     items.sort(key=lambda i: i["popularity"], reverse=True)
     plex_ids = {"movie": await get_plex_ids("movie"), "tv": await get_plex_ids("tv")}
     active = await db_fetchall(
-        "SELECT tmdb_id, media_type FROM requests WHERE status IN (?, ?, ?)",
+        f"SELECT tmdb_id, media_type FROM requests WHERE status IN ({','.join('?' * len(ACTIVE_STATUSES))})",
         ACTIVE_STATUSES,
     )
     active_keys = {(r["tmdb_id"], r["media_type"]) for r in active}
@@ -561,7 +668,7 @@ async def api_search():
 async def api_requests():
     rows = await db_fetchall(
         "SELECT id, tmdb_id, media_type, season, title, year, language_target, "
-        "status, requested_by, requested_at, copied_at FROM requests ORDER BY id DESC"
+        "status, error, requested_by, requested_at, copied_at FROM requests ORDER BY id DESC"
     )
     return jsonify(rows)
 
@@ -572,53 +679,47 @@ async def api_request():
     tmdb_id = body.get("tmdb_id")
     media_type = body.get("media_type")
     season = body.get("season")
-    language = body.get("language")
-    if not isinstance(tmdb_id, int) or media_type not in ("movie", "tv"):
+    language = body.get("language") or ""
+    if isinstance(tmdb_id, bool) or not isinstance(tmdb_id, int) or media_type not in ("movie", "tv"):
         return jsonify({"error": "bad request"}), 400
     if media_type == "movie":
         season = None
     elif isinstance(season, bool) or (season is not None and (not isinstance(season, int) or season < 1)):
         return jsonify({"error": "bad season"}), 400
-    if language not in (None, "pl", "en"):
+    if language not in ("", "pl", "en"):
         return jsonify({"error": "bad language"}), 400
     user = request.headers.get(CONFIG["REMOTE_USER_HEADER"]) or "dev"
     active = await db_fetchall(
-        "SELECT id FROM requests WHERE tmdb_id = ? AND media_type = ? AND status IN (?, ?, ?)",
+        f"SELECT id FROM requests WHERE tmdb_id = ? AND media_type = ?"
+        f" AND status IN ({','.join('?' * len(ACTIVE_STATUSES))})",
         (tmdb_id, media_type, *ACTIVE_STATUSES),
     )
     if active:
         return jsonify({"error": "already requested"}), 409
     if tmdb_id in await get_plex_ids(media_type):
         return jsonify({"error": "already in library"}), 409
+    title, year = body.get("title"), body.get("year")
+    if not isinstance(title, str) or not title:
+        try:
+            d = await tmdb_detail(media_type, tmdb_id)
+        except httpx.HTTPError as exc:
+            return jsonify({"error": f"tmdb: {exc}"}), 502
+        title = d["title_pl"] or d["title_original"]
+        year = d["year"]
     try:
-        d = await tmdb_detail(media_type, tmdb_id)
-    except httpx.HTTPError as exc:
-        return jsonify({"error": f"tmdb: {exc}"}), 502
-    if language:
-        target = language
-    elif "PL" in d["origin_country"] or d["animation"]:
-        target = "pl"
-    else:
-        target = "en"
-    try:
-        release = await find_and_grab(media_type, d, target, season)
-    except httpx.HTTPError as exc:
-        return jsonify({"error": f"prowlarr: {exc}"}), 502
-    status = "sent" if release else ("no_match_pl" if target == "pl" else "no_release")
+        year = int(year)
+    except (TypeError, ValueError):
+        year = None
     rid = await db_execute(
         "INSERT INTO requests (tmdb_id, media_type, season, title, year, language_target,"
-        " release_name, indexer_id, guid, info_hash, size, seeders, requested_by, requested_at, status)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " requested_by, requested_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'searching')",
         (
-            tmdb_id, media_type, season, d["title_pl"] or d["title_original"], d["year"], target,
-            release and release.get("title"), release and release.get("indexerId"),
-            release and release.get("guid"), release and release.get("infoHash"),
-            release and release.get("size"), release and release.get("seeders"),
-            user, datetime.datetime.now(datetime.timezone.utc).isoformat(), status,
+            tmdb_id, media_type, season, title, year, language, user,
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
         ),
     )
-    BACKGROUND_TASKS.append(asyncio.create_task(first_check(rid)))
-    return jsonify({"id": rid, "status": status})
+    spawn_background(perform_request(rid))
+    return jsonify({"id": rid, "status": "searching"})
 
 
 @app.route("/api/requests/<int:rid>/fallback-en", methods=["POST"])
@@ -629,24 +730,11 @@ async def fallback_en(rid):
     row = rows[0]
     if row["status"] != "no_match_pl":
         return jsonify({"error": "bad status"}), 409
-    try:
-        d = await tmdb_detail(row["media_type"], row["tmdb_id"])
-        release = await find_and_grab(row["media_type"], d, "en", row["season"])
-    except httpx.HTTPError as exc:
-        return jsonify({"error": f"prowlarr: {exc}"}), 502
-    status = "sent" if release else "no_release"
     await db_execute(
-        "UPDATE requests SET language_target = 'en', release_name = ?, indexer_id = ?, guid = ?,"
-        " info_hash = ?, size = ?, seeders = ?, status = ? WHERE id = ?",
-        (
-            release and release.get("title"), release and release.get("indexerId"),
-            release and release.get("guid"), release and release.get("infoHash"),
-            release and release.get("size"), release and release.get("seeders"),
-            status, rid,
-        ),
+        "UPDATE requests SET status = 'searching', language_target = 'en' WHERE id = ?", (rid,)
     )
-    BACKGROUND_TASKS.append(asyncio.create_task(first_check(rid)))
-    return jsonify({"id": rid, "status": status})
+    spawn_background(perform_request(rid))
+    return jsonify({"id": rid, "status": "searching"}), 202
 
 
 @app.route("/api/health")

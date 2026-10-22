@@ -155,3 +155,52 @@ DB_PATH i ścieżka configu (`data/grabarr.db`, `data/config.yaml`, względem ka
 - Tabela tokenów języka w config.yaml, nie w kodzie.
 - Nie dodawać ffprobe ani jakiejkolwiek weryfikacji po pobraniu.
 - Nie dodawać wyboru release'u przez użytkownika.
+
+## 16. Faza 2 — poprawki po testach (2026-10-22)
+
+### 16.1 Request asynchroniczny
+- `POST /api/request`: walidacja + dup-check → INSERT ze statusem `searching` → natychmiastowa odpowiedź `{"id", "status": "searching"}`. Body opcjonalnie z `title`/`year` (UI ma je z wyników wyszukiwania); brak → `tmdb_detail` przed insertem.
+- `perform_request(rid)` w tle (`BACKGROUND_TASKS`): `tmdb_detail` → target → `find_and_grab` → UPDATE: `sent` (+ `first_check`) / `no_match_pl` / `no_release` / `search_failed` + komunikat w `error`.
+- `searching` w `ACTIVE_STATUSES` (duplikat → 409, badge "Pobieranie").
+- Start aplikacji: `perform_request` odtwarzane z DB dla wierszy w statusie `searching`.
+- `POST /api/requests/{id}/fallback-en`: analogicznie — status `searching`, task w tle, 202.
+
+### 16.2 Prowlarr
+- Usunąć `return_exceptions=True` w `find_and_grab`; wyjątki → `search_failed` z komunikatem.
+- Env `PROWLARR_TIMEOUT` (sekundy, default 300) zamiast hardcoded 60.
+- `log.info`: liczba surowych wyników po scaleniu query; wybrany release. Brak kandydatów → `log.warning` z licznikami z `filter_releases(..., stats=None)`: `total`, `deduped`, `lang`, `resolution`, `seasons`, `size`.
+- Query z rokiem dla filmów: `"{title} {year}"` (tytuł oryginalny i PL); seriale bez roku.
+
+### 16.3 Plex
+- Ekstrakcja TMDB id z atrybutu `guid` (legacy) i dzieci `<Guid id="tmdb://..."/>`; regex `tmdb://(\d+)`.
+- Log INFO po refreshu: sekcja, liczba itemów, liczba tmdb id. WARNING gdy items > 0 i ids == 0.
+
+### 16.4 Dane
+- Kolumna `error TEXT`; migracja istniejącej DB: `PRAGMA table_info(requests)` + `ALTER TABLE requests ADD COLUMN error TEXT`.
+- Nowe statusy: `searching`, `search_failed`.
+
+### 16.5 UI
+- Usunąć kolumny "Kto"/"Kiedy" (`<thead>` + `renderRequests`); API/DB bez zmian.
+- STATUS: `searching: ['Szukanie', 'active']`, `search_failed: ['Błąd', 'error']`; `r.error` widoczne przy statusie.
+- `requestItem`: `loadRequests()` natychmiast po POST.
+
+### 16.6 Milestones
+- [x] M7: Prowlarr (16.2).
+- [x] M8: Request asynchroniczny (16.1 + 16.4).
+- [x] M9: Plex (16.3).
+- [x] M10: UI (16.5).
+
+### 16.7 Kryteria akceptacji
+- Klik "Pobierz" → wiersz "Szukanie" natychmiast; UI nie czeka na Prowlarr.
+- Błąd Prowlarr (np. 401, timeout) → status "Błąd" z komunikatem, nie "Brak release'u".
+- Restart w trakcie `searching` → task wznowiony z DB po starcie aplikacji.
+- Pozycja z Plex → badge "W bibliotece", brak "Pobierz", POST → 409.
+- Tabela Requesty bez "Kto"/"Kiedy".
+- Testy wyłącznie na mockach (httpx, tymczasowa DB) — zero połączeń z Prowlarr/Plex/TMDB, zero prawdziwych kluczy i danych. Pokrycie: async flow (`searching` → `sent`/`no_release`), 401 → `search_failed`, duplikat przy `searching` → 409, resume po restarcie, parsowanie Plex XML (nowy format, legacy, same imdb → pusto), `stats`, rok w query.
+
+### 16.8 Poprawki po review (2026-10-22)
+- `perform_request`: guard `ACTIVE_RIDS` przed równoległym wykonaniem tego samego rid (TOCTOU → podwójny grab); komunikat błędu z fallbackiem na nazwę wyjątku gdy `str(exc)` puste.
+- `BACKGROUND_TASKS`: set + `spawn_background` z done-callback (usuwanie ukończonych tasków) zamiast listy rosnącej bez ograniczeń.
+- `api_request`: odrzuca `bool` jako `tmdb_id`.
+- UI: pusta komórka języka przy `searching` pokazuje AUTO.
+- Testy POST: auto-spawn `perform_request` wyłączony mockiem (noop) — deterministyczne ręczne wykonanie, brak ostrzeżeń aiosqlite (Event loop is closed).

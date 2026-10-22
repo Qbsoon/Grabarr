@@ -45,14 +45,15 @@ th{color:#999;font-weight:500}
 <div id="results"></div>
 <h2>Requesty</h2>
 <table>
-<thead><tr><th>Tytuł</th><th>Sezon</th><th>Język</th><th>Status</th><th>Kto</th><th>Kiedy</th><th></th></tr></thead>
+<thead><tr><th>Tytuł</th><th>Sezon</th><th>Język</th><th>Status</th><th></th></tr></thead>
 <tbody id="requests"></tbody>
 </table>
 <script>
 const STATUS = {
+  searching: ['Szukanie', 'active'],
   sent: ['Wysłane', 'active'], downloading: ['Pobieranie', 'active'], copying: ['Kopiowanie', 'active'],
   done: ['Gotowe', 'done'], no_match_pl: ['Brak PL', 'error'], no_release: ["Brak release'u", 'error'],
-  file_not_found: ['Nie znaleziono pliku', 'error'],
+  search_failed: ['Błąd', 'error'], file_not_found: ['Nie znaleziono pliku', 'error'],
 };
 const $ = id => document.getElementById(id);
 const msg = t => $('msg').textContent = t || '';
@@ -86,7 +87,7 @@ function renderResults(items) {
         <option value="">Auto</option><option value="pl">PL</option><option value="en">EN</option>
       </select></div>
       <button onclick="requestItem(this, ${it.tmdb_id}, '${it.media_type}')">Pobierz</button>`;
-    return `<div class="card">${poster}<div class="info">
+    return `<div class="card" data-title="${esc(it.title)}" data-year="${esc(it.year || '')}">${poster}<div class="info">
       <div class="title">${esc(it.title)}</div>
       <div class="meta">${it.media_type === 'tv' ? 'Serial' : 'Film'}${it.year ? ' · ' + esc(it.year) : ''}</div>
       ${badge}${controls}</div></div>`;
@@ -105,6 +106,7 @@ async function requestItem(btn, tmdbId, mediaType) {
   const langSel = card.querySelector('[data-lang]');
   const body = {
     tmdb_id: tmdbId, media_type: mediaType,
+    title: card.dataset.title || '', year: card.dataset.year || '',
     season: seasonSel && seasonSel.value ? parseInt(seasonSel.value) : null,
     language: langSel && langSel.value ? langSel.value : null,
   };
@@ -123,15 +125,14 @@ async function loadRequests() {
 function renderRequests(rows) {
   $('requests').innerHTML = rows.map(r => {
     const [label, cls] = STATUS[r.status] || [r.status, ''];
+    const err = r.status === 'search_failed' && r.error ? ` title="${esc(r.error)}"` : '';
     const fallback = r.status === 'no_match_pl'
       ? `<button onclick="fallbackEn(${r.id}, this)">Pobierz EN</button>` : '';
     return `<tr>
       <td>${esc(r.title)}</td>
       <td>${r.media_type === 'tv' ? (r.season ? 'S' + String(r.season).padStart(2, '0') : 'Cały serial') : '—'}</td>
-      <td>${esc((r.language_target || '').toUpperCase())}</td>
-      <td><span class="status ${cls}">${label}</span></td>
-      <td>${esc(r.requested_by)}</td>
-      <td>${esc(r.requested_at)}</td>
+      <td>${esc((r.language_target || 'auto').toUpperCase())}</td>
+      <td><span class="status ${cls}"${err}>${label}</span></td>
       <td>${fallback}</td></tr>`;
   }).join('');
 }

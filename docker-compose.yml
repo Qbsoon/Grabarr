@@ -16,6 +16,7 @@ services:
       - SERIES_DIR=/plex/series
       - REMOTE_USER_HEADER=X-Authentik-Username
       - POLL_SECONDS=60
+      - PROWLARR_TIMEOUT=300
     volumes:
       - ./data:/app/data
       - ./downloads:/downloads:ro
