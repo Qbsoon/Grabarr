@@ -172,7 +172,8 @@ DB_PATH i ścieżka configu (`data/grabarr.db`, `data/config.yaml`, względem ka
 - Query z rokiem dla filmów: `"{title} {year}"` (tytuł oryginalny i PL); seriale bez roku.
 
 ### 16.3 Plex
-- Ekstrakcja TMDB id z atrybutu `guid` (legacy) i dzieci `<Guid id="tmdb://..."/>`; regex `tmdb://(\d+)`.
+- Ekstrakcja TMDB id z atrybutu `guid` (legacy) i dzieci `<Guid id="tmdb://..."/>`; regex `tmdb://(\d+)`. Itemy biblioteki w XML: elementy z atrybutem `guid` (`Video`/`Directory`), nie `Metadata`.
+- Request `/library/sections/{key}/all` z parametrem `includeGuids=1` — bez niego Plex nie zwraca elementów `Guid`.
 - Log INFO po refreshu: sekcja, liczba itemów, liczba tmdb id. WARNING gdy items > 0 i ids == 0.
 
 ### 16.4 Dane

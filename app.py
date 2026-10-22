@@ -126,7 +126,7 @@ async def refresh_plex_cache():
                 continue
             r = await client.get(
                 f"{CONFIG['PLEX_URL']}/library/sections/{key}/all",
-                params={"X-Plex-Token": CONFIG["PLEX_TOKEN"]},
+                params={"X-Plex-Token": CONFIG["PLEX_TOKEN"], "includeGuids": "1"},
             )
             r.raise_for_status()
             items = plex_items(ET.fromstring(r.content))
